@@ -6,8 +6,8 @@
 
 pairing_t pairing;
 clock_t start, end;
+SETUP setup(int, int);
 
-typedef element_t PK;
 typedef element_t SK;
 
 typedef struct msk {
@@ -35,7 +35,10 @@ typedef struct setup {
     MSK msk;
 } SETUP;
 
-// void setup(int, int);
+typedef struct keys {
+    SK userSK;
+} KEY;
+
 
 SETUP setup(int k, int m){
     SETUP set;
@@ -64,6 +67,7 @@ SETUP setup(int k, int m){
         element_init_G1(set.pp.Hx[i], pairing);
         element_pow_zn(set.pp.Hx[i], set.pp.g, x);
     };
+    
     // Revock
     generateFromG1(set.pp.h, pairing);
     mpz_t square;
@@ -75,17 +79,18 @@ SETUP setup(int k, int m){
     generateFromG1(set.pp.r1, pairing); // r1 init
     element_pow_zn(set.pp.r1, set.pp.g, set.msk.b);
     generateFromG1(set.pp.r2, pairing); // r2 init
-    element_pow_zn(set.pp.r2, set.pp.g, pow_b_2);
+    element_pow_zn(set.pp.r2, set.pp.g, pow_b_2); //g^(b^2)
     generateFromG1(set.pp.r3, pairing); // r3 init
     element_pow_zn(set.pp.r3, set.pp.h, set.msk.b);
 
     // Message
-    
-
+    element_t temp;
+    generateFromGt(temp, pairing);
+    element_pairing(temp, set.pp.g, set.pp.g); // temp = e(g, g)
+    generateFromGt(set.pp.omega, pairing);
+    element_pow_zn(set.pp.omega, temp, set.msk.alpha);
     return set;
 }
-
-
 
 
 int main(int argc, char *argv[]){
@@ -94,6 +99,7 @@ int main(int argc, char *argv[]){
     if (!count)
         return 1;
     pairing_init_set_buf(pairing, param, count);
-    setup(4, 3);
+    int maxSizeOfPredicate, numberOfAttName;
+    SETUP set =  setup(50, 50);
     return 0;
 }
