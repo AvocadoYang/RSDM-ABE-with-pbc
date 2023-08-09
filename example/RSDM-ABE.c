@@ -5,10 +5,12 @@
 #include "./generateFun.c"
 #define ATTRIBUTE_NAME 50
 #define ATTRIBUTE_VALUE 50
+#define PREDICATECONTAIN 15
 #define IdCount 20
 #define COLUMN 10 
 #define REVOKE 15
 #define PREDICATE 10
+#define MIN_VALUE 1
 pairing_t pairing;
 clock_t start, end;
 
@@ -20,6 +22,10 @@ typedef struct msk {
     element_t *attribute;
     element_t *userId;
 } MSK;
+
+typedef struct msg{
+    mpz_t m;
+} MSG;
 
 typedef struct pp
 {
@@ -90,6 +96,8 @@ typedef struct ct {
 SETUP setup(int, int);
 KEY attributeKeyGen(int, int, int, SETUP);
 KEY revokKeyGen(int, SETUP, KEY);
+AP accessPolicyGen(int, int, SETUP);
+CT encrypt(int, int, MSG, AP, SETUP);
 
 SETUP setup(int k, int m){
     SETUP set;
@@ -101,7 +109,7 @@ SETUP setup(int k, int m){
     set.msk.attribute = (element_t*) malloc(m*sizeof(element_t));
     for(int i = 0; i < m; i++){
         generateFromZr(set.msk.attribute[i], pairing);
-    };
+    };// attribute_Variable
     set.msk.userId = (element_t *) malloc(IdCount*sizeof(element_t));
     for(int i = 0; i < IdCount; i++){
         generateFromZr(set.msk.userId[i], pairing);
@@ -241,7 +249,6 @@ KEY revokKeyGen(int personId, SETUP set, KEY keys){
     return keys;
 };
 
-
 AP accessPolicyGen(int l, int r, SETUP set){
     AP access_policy;
     // choose s' & s'' then compute s, set up the vectoer <s, y_1, y_2, ..., y_n>
@@ -310,11 +317,142 @@ AP accessPolicyGen(int l, int r, SETUP set){
     // pick r_1, r_2, ..., r_l end
     
     //compute f(k) start
-    
-    //compute f(k) end 
-
+    access_policy.LSSS.f_rox = (element_t*) malloc(COLUMN*sizeof(element_t));
+    for (int i = 0; i < PREDICATE; i++){
+        element_t temp;
+        generateFromZr(temp, pairing);
+        element_set0(temp);
+        for (int randomElement = 0; randomElement < PREDICATECONTAIN; randomElement++){
+            int randomNumber = rand() % 50;
+            element_add(temp, temp, set.msk.attribute[randomNumber]);
+        }
+        generateFromZr(access_policy.LSSS.f_rox[i], pairing);
+        element_set(access_policy.LSSS.f_rox[i], temp);
+    };
+    //compute f(k) end
 
     return access_policy;
+}
+
+MSG getmessage(){
+    MSG msg;
+    gmp_randstate_t state;
+    gmp_randinit_mt(state);
+    gmp_randseed_ui(state, time(NULL));
+    mpz_init(msg.m);
+    mpz_urandomb(msg.m, state, 32);
+    return msg;
+}
+
+CT encrypt(int l, int r, MSG msg, AP access_policy, SETUP set){
+    CT ct;
+
+    // compute C start
+    element_t Omega_s;
+    generateFromGt(Omega_s, pairing);
+    element_init_GT(ct.C, pairing);
+    element_pow_zn(Omega_s, set.pp.omega, access_policy.LSSS.s); 
+    element_mul_mpz(ct.C, Omega_s, msg.m); // C
+    // compute C end
+
+    // compute C' start
+    element_init_G1(ct.C_0, pairing);
+    element_pow_zn(ct.C_0, set.pp.g, access_policy.LSSS.s1); // C'
+    // compute C' end
+
+    // compute C_i start
+    ct.C_i = (element_t*) malloc(l*sizeof(element_t));
+    element_t w_lamda;
+    element_t h_s;
+    element_t g_fx_ri;
+    element_t negS;
+    element_t negT;
+    element_init_G1(negS, pairing);
+    element_neg(negS, access_policy.LSSS.s1);
+    element_init_G1(w_lamda, pairing);
+    element_init_G1(h_s, pairing);
+    element_init_G1(g_fx_ri, pairing);
+    element_init_G1(negT, pairing);
+    for(int i = 0; i < l; i++){
+        element_init_G1(ct.C_i[i], pairing);
+        element_neg(negT, access_policy.LSSS.r_l[i]);
+        element_pow_zn(w_lamda, set.pp.w, access_policy.LSSS.lamda[i]);
+        element_pow_zn(h_s, set.pp.hx[i], negS);
+        element_pow_zn(g_fx_ri, set.pp.g, access_policy.LSSS.f_rox[i]);
+        element_pow_zn(g_fx_ri, g_fx_ri, negT);
+        element_mul(ct.C_i[i], w_lamda, h_s);
+        element_mul(ct.C_i[i], ct.C_i[i], g_fx_ri);
+    };
+    element_clear(w_lamda);
+    element_clear(h_s);
+    element_clear(g_fx_ri);
+    // compute C_i end
+
+    // compute E'_i and E_ij start
+    ct.E_i = (element_t*) malloc(l*sizeof(element_t));
+    for(int i = 0; i < l; i++){
+        element_init_G1(ct.E_i[i], pairing);
+        element_pow_zn(ct.E_i[i], set.pp.g, access_policy.LSSS.r_l[i]);
+    };
+    ct.E_ij = (element_t *)malloc((l-1)*sizeof(element_t));
+    for(int i = 0; i < l-1; i++){
+        element_init_G1(ct.E_ij[i], pairing);
+        element_pow_zn(ct.E_ij[i], set.pp.Hx[i], access_policy.LSSS.r_l[i]);
+    };
+    // compute E'_i and E_ij end
+
+    // compute C_0 start
+    element_init_G1(ct.C_0, pairing);
+    element_pow_zn(ct.C_0, set.pp.g, access_policy.revoke.s2);
+    // compute C_0 end
+
+    // compute C_k1 and C_k2 start
+    element_t bs_k;
+    element_t b2;
+    element_t b2ID_k;
+    element_t h_b;
+    element_t g_b2ID_k;
+    element_init_Zr(bs_k, pairing);
+    element_init_Zr(b2, pairing);
+    element_init_Zr(b2ID_k, pairing);
+    element_square(b2, set.msk.b);
+    element_init_G1(h_b, pairing);
+    element_init_G1(g_b2ID_k, pairing);
+
+    ct.C_k1 = (element_t*) malloc(r*sizeof(element_t));
+    ct.C_k2 = (element_t*) malloc(r*sizeof(element_t));
+    int selectedNumbers[REVOKE];                   // 儲存選擇的數字的陣列
+    int availableNumbers[IdCount - MIN_VALUE + 1]; // 儲存可選擇的數字的陣列
+    int numAvailable = IdCount - MIN_VALUE ;    // 可選擇的數字總數
+    srand(time(NULL)); // 初始化亂數種子
+        // 初始化可選擇的數字陣列
+    for (int i = 0; i < numAvailable; i++){
+        availableNumbers[i] = i + MIN_VALUE;
+    }
+    // 從可選擇的數字中隨機選擇15個並存入selectedNumbers陣列
+    for (int i = 0; i < REVOKE; i++){
+        int randomIndex = rand() % numAvailable; // 隨機選擇索引
+        selectedNumbers[i] = availableNumbers[randomIndex]; // 將選擇的數字存入selectedNumbers
+        // 將已選擇的數字從可選擇的數字陣列中移除
+        availableNumbers[randomIndex] = availableNumbers[numAvailable - 1];
+        numAvailable--; // 可選擇的數字總數減少
+    }
+    for(int s_k = 0; s_k < REVOKE; s_k++){
+        //C_k,1
+        int idIndex = selectedNumbers[s_k];
+        element_init_G1(ct.C_k1[s_k], pairing);
+        element_mul(bs_k, set.msk.b, access_policy.revoke.s_r[s_k]);
+        element_pow_zn(ct.C_k1[s_k], set.pp.g, bs_k); // g^bs''_k
+        //C_k,2
+        element_init_G1(ct.C_k2[s_k], pairing);
+        element_mul(b2ID_k, b2, set.msk.userId[s_k]);
+        element_pow_zn(g_b2ID_k, set.pp.g, b2ID_k);
+        element_pow_zn(h_b, set.pp.h, set.msk.b);
+        element_mul(ct.C_k2[s_k], g_b2ID_k, h_b);
+        element_pow_zn(ct.C_k2[s_k], ct.C_k2[s_k], access_policy.revoke.s_r[s_k]);
+    }
+    // compute C_k1 and C_k2 end
+        return ct;
 }
 
 int main(int argc, char *argv[]){
@@ -328,6 +466,8 @@ int main(int argc, char *argv[]){
     KEY keys = attributeKeyGen(ATTRIBUTE_NAME, ATTRIBUTE_VALUE, 3, set);
     keys = revokKeyGen(3, set, keys);
     AP access_policy = accessPolicyGen(PREDICATE, REVOKE, set);
+    MSG msg = getmessage();
+    CT ct = encrypt(PREDICATE, REVOKE, msg, access_policy, set);
 
     printf("Hello");
     return 0;

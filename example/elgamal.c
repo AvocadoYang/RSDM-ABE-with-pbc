@@ -121,14 +121,14 @@ MSG decryption(PK pk, SK sk, CT ct) {
 int main() {
   KEY key = keygen();
   printf("h = %s\np = %s\nq = %s\nsk = %s\n", mpz_get_str(NULL, 0, key.pk.h),
-         mpz_get_str(NULL, 0, key.pk.p), mpz_get_str(NULL, 0, key.pk.q),
-         mpz_get_str(NULL, 0, key.sk));
+        mpz_get_str(NULL, 0, key.pk.p), mpz_get_str(NULL, 0, key.pk.q),
+        mpz_get_str(NULL, 0, key.sk));
   MSG msg = getmessage();
   CT ct = encryption(key.pk, msg);
   printf("c1 = %s\nc2 = %s\n", mpz_get_str(NULL, 0, ct.c1),
-         mpz_get_str(NULL, 0, ct.c2));
+        mpz_get_str(NULL, 0, ct.c2));
   MSG result = decryption(key.pk, key.sk, ct);
   printf("message = %s, result = %s\n", mpz_get_str(NULL, 0, msg.m),
-         mpz_get_str(NULL, 0, result.m));
+        mpz_get_str(NULL, 0, result.m));
   return 0;
 }

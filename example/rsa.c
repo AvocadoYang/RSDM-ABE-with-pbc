@@ -118,17 +118,17 @@ int main(int argc, char const *argv[]) {
   KEY key = keygen();
 
   printf("Initializing with p = %s, q = %s, d = %s, e = %s, n = %s\n",
-         mpz_get_str(NULL, 0, key.sk.p), mpz_get_str(NULL, 0, key.sk.q),
-         mpz_get_str(NULL, 0, key.sk.d), mpz_get_str(NULL, 0, key.pk.e),
-         mpz_get_str(NULL, 0, key.pk.n));
+        mpz_get_str(NULL, 0, key.sk.p), mpz_get_str(NULL, 0, key.sk.q),
+        mpz_get_str(NULL, 0, key.sk.d), mpz_get_str(NULL, 0, key.pk.e),
+        mpz_get_str(NULL, 0, key.pk.n));
 
   MSG msg = getmessage();
   CT ct = encryption(key.pk, msg);
   MSG pt = decryption(key.sk, key.pk, ct);
 
   printf("Output with Message = %s, CipherText = %s, Decrypt PlainText = %s\n",
-         mpz_get_str(NULL, 0, msg.m), mpz_get_str(NULL, 0, ct.m),
-         mpz_get_str(NULL, 0, pt.m));
+        mpz_get_str(NULL, 0, msg.m), mpz_get_str(NULL, 0, ct.m),
+        mpz_get_str(NULL, 0, pt.m));
 
   return 0;
 }
