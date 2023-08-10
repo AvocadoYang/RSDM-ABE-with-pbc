@@ -10,6 +10,7 @@
 #define COLUMN 10 
 #define REVOKE 15
 #define PREDICATE 10
+#define ATTRIBUTENUM 20
 #define MIN_VALUE 1
 pairing_t pairing;
 clock_t start, end;
@@ -23,9 +24,9 @@ typedef struct msk {
     element_t *userId;
 } MSK;
 
-typedef struct msg{
-    mpz_t m;
-} MSG;
+typedef struct attrSet {
+    element_t *attribute;
+} ASET;
 
 typedef struct pp
 {
@@ -81,6 +82,11 @@ typedef struct access_policy{
     RL revoke;
 } AP;
 
+
+typedef struct pt{
+    element_t msg;
+}PT;
+
 typedef struct ct {
     element_t C;
     element_t Cbar;
@@ -97,7 +103,10 @@ SETUP setup(int, int);
 KEY attributeKeyGen(int, int, int, SETUP);
 KEY revokKeyGen(int, SETUP, KEY);
 AP accessPolicyGen(int, int, SETUP);
-CT encrypt(int, int, MSG, AP, SETUP);
+CT encrypt(int, int, PT, AP, SETUP);
+PT attrDecrypt(SETUP, CT, AP, int, KEY, ASET, int);
+PT revokeDecrypt(PT ,SETUP, CT, AP, int, KEY, ASET, int);
+ASET getAttribute(int attNum, SETUP);
 
 SETUP setup(int k, int m){
     SETUP set;
@@ -334,25 +343,22 @@ AP accessPolicyGen(int l, int r, SETUP set){
     return access_policy;
 }
 
-MSG getmessage(){
-    MSG msg;
-    gmp_randstate_t state;
-    gmp_randinit_mt(state);
-    gmp_randseed_ui(state, time(NULL));
-    mpz_init(msg.m);
-    mpz_urandomb(msg.m, state, 32);
-    return msg;
+PT getmessage(){
+    PT MSGS;
+    char MSG[] = "Message";
+    element_init_GT(MSGS.msg, pairing);
+    element_from_hash(MSGS.msg, MSG, sizeof(MSG));
+    return MSGS;
 }
 
-CT encrypt(int l, int r, MSG msg, AP access_policy, SETUP set){
+CT encrypt(int l, int r, PT msg, AP access_policy, SETUP set){
     CT ct;
-
     // compute C start
     element_t Omega_s;
     generateFromGt(Omega_s, pairing);
     element_init_GT(ct.C, pairing);
-    element_pow_zn(Omega_s, set.pp.omega, access_policy.LSSS.s); 
-    element_mul_mpz(ct.C, Omega_s, msg.m); // C
+    element_pow_zn(Omega_s, set.pp.omega, access_policy.LSSS.s);
+    element_add(ct.C, Omega_s, msg.msg); // C
     // compute C end
 
     // compute C' start
@@ -455,6 +461,140 @@ CT encrypt(int l, int r, MSG msg, AP access_policy, SETUP set){
         return ct;
 }
 
+ASET getAttribute(int attSetNum, SETUP set){
+    ASET userAttributeSet;
+    userAttributeSet.attribute = (element_t*) malloc(ATTRIBUTENUM*sizeof(element_t));
+    for (int i = 0; i < ATTRIBUTENUM; i++){
+        element_init_Zr(userAttributeSet.attribute[i], pairing);
+        element_set(userAttributeSet.attribute[i], set.msk.attribute[i]);
+    }
+    return userAttributeSet;
+};
+
+PT attrDecrypt(SETUP set, CT ct, AP access_policy, int user_id, KEY keys, ASET userAttrSet, int l)
+{
+    PT decMsg;
+    element_t decry1;
+    element_t decry2;
+    // attribute decrypt start
+    element_t *w_x;
+    element_t fx_kz;
+    element_t ri_fx_kz;
+    element_init_Zr(fx_kz, pairing);
+    element_init_Zr(ri_fx_kz, pairing);
+    w_x = (element_t *)malloc(l * sizeof(element_t));
+    for(int i = 0; i < l; i++){
+        for (int j = 0; j < ATTRIBUTENUM; j++){
+            element_div(fx_kz, access_policy.LSSS.f_rox[i], userAttrSet.attribute[j]);
+        }
+        element_mul(ri_fx_kz, access_policy.LSSS.r_l[i], fx_kz);
+        element_init_G1(w_x[i], pairing);
+        element_pow_zn(w_x[i], set.pp.g, ri_fx_kz);
+    }
+    element_clear(fx_kz);
+    element_clear(ri_fx_kz);
+
+    element_t *decryBilinear; // e(w^{lamda_i}, g^t);
+    element_t pairing1;
+    element_t pairing2;
+    element_t pairing3;
+    element_t lsssResult;
+    element_init_GT(pairing1, pairing);
+    element_init_GT(pairing2, pairing);
+    element_init_GT(pairing3, pairing);
+    element_init_GT(lsssResult, pairing);
+    element_set0(lsssResult);
+    decryBilinear = (element_t*) malloc(l*sizeof(element_t));
+    for(int i = 0; i <l; i++){
+        element_pairing(pairing1, ct.C_i[i], keys.K_2);
+        element_pairing(pairing2, ct.C_0, keys.K_x[i]);
+        element_pairing(pairing3, w_x[i], keys.D_x[i]);
+        element_init_GT(decryBilinear[i], pairing);
+        element_mul(decryBilinear[i], pairing1, pairing2);
+        element_mul(decryBilinear[i], decryBilinear[i], pairing3);
+    };
+    for(int i = 0; i <l; i++){
+        element_add(lsssResult, lsssResult, decryBilinear[i]);
+    };
+    element_pairing(pairing1, ct.C_0, keys.K_1);
+    element_init_GT(decry1, pairing);
+    element_init_GT(decry1, pairing);
+    element_div(decry1, pairing1, lsssResult);
+    element_clear(lsssResult);
+    // attribute decrypt end
+
+    element_pairing(pairing1, ct.C_0, keys.D_0);
+    element_t *idSubid;
+    element_t iterateCk1;
+    element_t iterateCk2;
+    element_t Ck1_idsubid;
+    element_t Ck2_idsubid;
+    element_init_G1(Ck1_idsubid, pairing);
+    element_init_G1(Ck2_idsubid, pairing);
+    element_init_G1(iterateCk1, pairing);
+    element_init_G1(iterateCk2, pairing);
+    element_set0(iterateCk1);
+    element_set0(iterateCk2);
+    idSubid = (element_t *)malloc(REVOKE * sizeof(element_t));
+    for (int i = 0; i < REVOKE; i++){
+        element_init_Zr(idSubid[i], pairing);
+        element_sub(idSubid[i], set.msk.userId[IdCount-2], set.msk.userId[i]);
+        element_invert(idSubid[i], idSubid[i]);
+    }
+    for (int i = 0; i < REVOKE; i++){
+        element_pow_zn(Ck1_idsubid, ct.C_k1[i], idSubid[i]);
+        element_pow_zn(Ck2_idsubid, ct.C_k2[i], idSubid[i]);
+        element_add(iterateCk1, iterateCk1, Ck1_idsubid);
+        element_add(iterateCk2, iterateCk2, Ck2_idsubid);
+    }
+    element_pairing(pairing2, keys.D_1, iterateCk1);
+    element_pairing(pairing3, keys.D_2, iterateCk2);
+    element_init_GT(decry2, pairing);
+    element_div(decry2, pairing1, pairing2);
+    element_div(decry2, decry2, pairing3);
+    element_init_GT(decMsg.msg, pairing);
+    element_mul(decMsg.msg, decry1, decry2);
+    element_div(decMsg.msg, ct.C, decMsg.msg);
+    return decMsg;
+};
+
+PT revokeDecrypt(PT plantext, SETUP set, CT ct, AP access_policy, int user_id, KEY keys, ASET userAttrSet, int l){
+    element_t pairing1;
+    element_t pairing2;
+    element_t pairing3;
+    element_init_GT(pairing1, pairing);
+    element_init_GT(pairing2, pairing);
+    element_init_GT(pairing3, pairing);
+    element_pairing(pairing1, ct.C_0, keys.D_0);
+    element_t *idSubid;
+    element_t iterateCk1;
+    element_t iterateCk2;
+    element_t Ck1_idsubid;
+    element_t Ck2_idsubid;
+    element_init_G1(Ck1_idsubid, pairing);
+    element_init_G1(Ck2_idsubid, pairing);
+    element_init_G1(iterateCk1, pairing);
+    element_init_G1(iterateCk2, pairing);
+    element_set0(iterateCk1);
+    element_set0(iterateCk2);
+    idSubid = (element_t*) malloc(REVOKE*sizeof(element_t));
+    for(int i=0; i < REVOKE; i++){
+        element_init_Zr(idSubid[i], pairing);
+        element_sub(idSubid[i], set.msk.userId[IdCount-1], set.msk.userId[i]);
+        element_invert(idSubid[i], idSubid[i]);
+    }
+    for(int i = 0; i < REVOKE; i++){
+        element_pow_zn(Ck1_idsubid, ct.C_k1[i], idSubid[i]);
+        element_pow_zn(Ck2_idsubid, ct.C_k2[i], idSubid[i]);
+        element_add(iterateCk1, iterateCk1, Ck1_idsubid);
+        element_add(iterateCk2, iterateCk2, Ck2_idsubid);
+    }
+    element_pairing(pairing2, keys.D_1, iterateCk1);
+    element_pairing(pairing3, keys.D_2, iterateCk2);
+    
+    return plantext;
+}
+
 int main(int argc, char *argv[]){
     char param[1024];
     size_t count = fread(param, 1, 1024, stdin);
@@ -466,9 +606,12 @@ int main(int argc, char *argv[]){
     KEY keys = attributeKeyGen(ATTRIBUTE_NAME, ATTRIBUTE_VALUE, 3, set);
     keys = revokKeyGen(3, set, keys);
     AP access_policy = accessPolicyGen(PREDICATE, REVOKE, set);
-    MSG msg = getmessage();
-    CT ct = encrypt(PREDICATE, REVOKE, msg, access_policy, set);
-
-    printf("Hello");
+    PT MSG = getmessage();
+    CT ct = encrypt(PREDICATE, REVOKE, MSG, access_policy, set);
+    ASET userAttrSet = getAttribute(ATTRIBUTENUM, set);
+    PT plantext = attrDecrypt(set, ct, access_policy, 20, keys, userAttrSet, PREDICATE);
+    int result = element_cmp(MSG.msg, plantext.msg);
+    printf("%d \n", result);
+    printf("process over");
     return 0;
 }
