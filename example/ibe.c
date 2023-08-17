@@ -96,7 +96,8 @@ int main(int argc, char const *argv[]) {
   start = clock();
   SETUP set = setup();
   end = clock();
-#ifdef 2
+  printf("setup exec time: %f\n", (double)(end - start) / CLOCKS_PER_SEC);
+#ifdef TIME
   printf("setup exec time: %f\n", (double)(end - start) / CLOCKS_PER_SEC);
 #endif
 #ifdef DEBUG
